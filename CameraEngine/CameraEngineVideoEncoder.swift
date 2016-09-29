@@ -100,6 +100,7 @@ class CameraEngineVideoEncoder {
     private var startTime: CMTime!
     private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor!
     var blockHandlerPixelBuffer: blockHandlerPixelBuffer?
+    private let queue = DispatchQueue(label: "CameraEnigne.VideoEncoder")
     
     
     lazy var presetSettingEncoder: AVOutputSettingsAssistant? = {
@@ -156,87 +157,68 @@ class CameraEngineVideoEncoder {
     }
     
     func startWriting(_ url: URL) {
-        self.firstFrame = false
-        self.startTime = CMClockGetTime(CMClockGetHostTimeClock())
-        self.initVideoEncoder(url)
+        queue.async {
+            self.firstFrame = false
+            self.startTime = CMClockGetTime(CMClockGetHostTimeClock())
+            self.initVideoEncoder(url)
+        }
     }
     
     func stopWriting(_ blockCompletion: blockCompletionCaptureVideo?) {
-        self.videoInputWriter.markAsFinished()
-        self.audioInputWriter.markAsFinished()
-        
-        self.assetWriter.finishWriting { () -> Void in
-            if let blockCompletion = blockCompletion {
-                blockCompletion(self.assetWriter.outputURL, nil)
+        queue.async {
+            self.videoInputWriter.markAsFinished()
+            self.audioInputWriter.markAsFinished()
+            self.assetWriter.finishWriting { [unowned self] () -> Void in
+                if let blockCompletion = blockCompletion {
+                    blockCompletion(self.assetWriter.outputURL, nil)
+                }
             }
         }
     }
     
     func appendBuffer(_ sampleBuffer: CMSampleBuffer!, isVideo: Bool) {
-        if !isVideo && !self.firstFrame {
-            return
-        }
-        
-        self.firstFrame = true
-        if CMSampleBufferDataIsReady(sampleBuffer) {
-            if self.assetWriter.status == AVAssetWriterStatus.unknown {
-                let startTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-                self.assetWriter.startWriting()
-                self.assetWriter.startSession(atSourceTime: startTime)
+        queue.async { [unowned self] () -> Void in
+            if !isVideo && !self.firstFrame {
+                return
             }
-            if isVideo {
-                if let blockHandlerPixelBuffer = blockHandlerPixelBuffer {
-                    guard let pixelBufferPool = pixelBufferAdaptor.pixelBufferPool else {
-                        print("error1")
-                        return
-                    }
-                    var outputPixelBuffer: CVPixelBuffer? = nil
-                    let result = CVPixelBufferPoolCreatePixelBuffer(nil, pixelBufferPool, &outputPixelBuffer)
-                    if result != kCVReturnSuccess {
-                        print("Cannot obtain a pixel buffer from the buffer pool with error: \(result)")
-                        return
-                    }
-                    guard let inBuf = CMSampleBufferGetImageBuffer(sampleBuffer), let outBuf = outputPixelBuffer else {
-                        print("error2")
-                        return
-                    }
-                    let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-                    blockHandlerPixelBuffer(inBuf, timestamp, outBuf)
-
-                    // TODO: PostProcess
-
-                    // write the video data
-                    if videoInputWriter.isReadyForMoreMediaData {
-                        pixelBufferAdaptor.append(outBuf, withPresentationTime: timestamp)
-                    }
-                    /*
-                     CVPixelBufferRef renderedOutputPixelBuffer = NULL;
-                     
-                     if (self.pixelBufferAdaptor) {
-                     OSStatus err = CVPixelBufferPoolCreatePixelBuffer(nil, self.pixelBufferAdaptor.pixelBufferPool, &renderedOutputPixelBuffer);
-                     if (err) {
-                     NSLog(@"Cannot obtain a pixel buffer from the buffer pool with error: %d", (int)err);
-                     return;
-                     }
-                     }
-                     
-                     self.pixelBufferHandler(imageBuffer, timestamp, renderedOutputPixelBuffer);
-                     
-                     // write the video data
-                     if (renderedOutputPixelBuffer != NULL && [self canWriteVideo]) {
-                     [self.pixelBufferAdaptor appendPixelBuffer:renderedOutputPixelBuffer withPresentationTime:timestamp];
-                     }
-                     
-                     CVPixelBufferRelease(renderedOutputPixelBuffer);
-                     */
-                    
-                } else if videoInputWriter.isReadyForMoreMediaData {
-                    videoInputWriter.append(sampleBuffer)
+            
+            self.firstFrame = true
+            if CMSampleBufferDataIsReady(sampleBuffer) {
+                if self.assetWriter.status == AVAssetWriterStatus.unknown {
+                    let startTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                    self.assetWriter.startWriting()
+                    self.assetWriter.startSession(atSourceTime: startTime)
                 }
-            }
-            else {
-                if self.audioInputWriter.isReadyForMoreMediaData {
-                    self.audioInputWriter.append(sampleBuffer)
+                if isVideo {
+                    
+                    if let blockHandlerPixelBuffer = self.blockHandlerPixelBuffer {
+                        guard let pixelBufferPool = self.pixelBufferAdaptor.pixelBufferPool else {
+                            return
+                        }
+                        var outputPixelBuffer: CVPixelBuffer? = nil
+                        let result = CVPixelBufferPoolCreatePixelBuffer(nil, pixelBufferPool, &outputPixelBuffer)
+                        if result != kCVReturnSuccess {
+                            print("Cannot obtain a pixel buffer from the buffer pool with error: \(result)")
+                            return
+                        }
+                        guard let inBuf = CMSampleBufferGetImageBuffer(sampleBuffer), let outBuf = outputPixelBuffer else {
+                            return
+                        }
+                        let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                        blockHandlerPixelBuffer(inBuf, timestamp, outBuf)
+                        
+                        if self.videoInputWriter.isReadyForMoreMediaData {
+                            self.pixelBufferAdaptor.append(outBuf, withPresentationTime: timestamp)
+                        }
+                        
+                    } else if self.videoInputWriter.isReadyForMoreMediaData {
+                        self.videoInputWriter.append(sampleBuffer)
+                    }
+                }
+                else {
+                    if self.audioInputWriter.isReadyForMoreMediaData {
+                        self.audioInputWriter.append(sampleBuffer)
+                    }
                 }
             }
         }
