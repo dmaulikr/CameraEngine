@@ -9,6 +9,8 @@
 import UIKit
 import AVFoundation
 
+public typealias blockHandlerPixelBuffer = (_ sampleBuffer: CVPixelBuffer, _ timestamp: CMTime, _ outputPixelBuffer: CVPixelBuffer) -> (Void)
+
 public enum CameraEngineVideoEncoderEncoderSettings: String {
     case Preset640x480
     case Preset960x540
@@ -96,6 +98,9 @@ class CameraEngineVideoEncoder {
     private var audioInputWriter: AVAssetWriterInput!
     private var firstFrame = false
     private var startTime: CMTime!
+    private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
+    var blockHandlerPixelBuffer: blockHandlerPixelBuffer?
+    
     
     lazy var presetSettingEncoder: AVOutputSettingsAssistant? = {
         return CameraEngineVideoEncoderEncoderSettings.Preset1920x1080.configuration()
@@ -155,12 +160,15 @@ class CameraEngineVideoEncoder {
                 blockCompletion(self.assetWriter.outputURL, nil)
             }
         }
+        
+        pixelBufferAdaptor = nil
     }
     
     func appendBuffer(_ sampleBuffer: CMSampleBuffer!, isVideo: Bool) {
         if !isVideo && !self.firstFrame {
             return
         }
+        
         self.firstFrame = true
         if CMSampleBufferDataIsReady(sampleBuffer) {
             if self.assetWriter.status == AVAssetWriterStatus.unknown {
@@ -169,8 +177,57 @@ class CameraEngineVideoEncoder {
                 self.assetWriter.startSession(atSourceTime: startTime)
             }
             if isVideo {
-                if self.videoInputWriter.isReadyForMoreMediaData {
-                    self.videoInputWriter.append(sampleBuffer)
+                if let blockHandlerPixelBuffer = blockHandlerPixelBuffer {
+                    if pixelBufferAdaptor == nil {
+                        pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInputWriter, sourcePixelBufferAttributes: nil)
+                        
+                    }
+                    guard let pixelBufferAdaptor = pixelBufferAdaptor, let pixelBufferPool = pixelBufferAdaptor.pixelBufferPool else {
+                        print("error1")
+                        return
+                    }
+                    var outputPixelBuffer: CVPixelBuffer? = nil
+                    let result = CVPixelBufferPoolCreatePixelBuffer(nil, pixelBufferPool, &outputPixelBuffer)
+                    if result != kCVReturnSuccess {
+                        print("Cannot obtain a pixel buffer from the buffer pool with error: \(result)")
+                        return
+                    }
+                    guard let inBuf = CMSampleBufferGetImageBuffer(sampleBuffer), let outBuf = outputPixelBuffer else {
+                        print("error2")
+                        return
+                    }
+                    let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                    blockHandlerPixelBuffer(inBuf, timestamp, outBuf)
+
+                    // TODO: PostProcess
+
+                    // write the video data
+                    if videoInputWriter.isReadyForMoreMediaData {
+                        pixelBufferAdaptor.append(outBuf, withPresentationTime: timestamp)
+                    }
+                    /*
+                     CVPixelBufferRef renderedOutputPixelBuffer = NULL;
+                     
+                     if (self.pixelBufferAdaptor) {
+                     OSStatus err = CVPixelBufferPoolCreatePixelBuffer(nil, self.pixelBufferAdaptor.pixelBufferPool, &renderedOutputPixelBuffer);
+                     if (err) {
+                     NSLog(@"Cannot obtain a pixel buffer from the buffer pool with error: %d", (int)err);
+                     return;
+                     }
+                     }
+                     
+                     self.pixelBufferHandler(imageBuffer, timestamp, renderedOutputPixelBuffer);
+                     
+                     // write the video data
+                     if (renderedOutputPixelBuffer != NULL && [self canWriteVideo]) {
+                     [self.pixelBufferAdaptor appendPixelBuffer:renderedOutputPixelBuffer withPresentationTime:timestamp];
+                     }
+                     
+                     CVPixelBufferRelease(renderedOutputPixelBuffer);
+                     */
+                    
+                } else if videoInputWriter.isReadyForMoreMediaData {
+                    videoInputWriter.append(sampleBuffer)
                 }
             }
             else {
