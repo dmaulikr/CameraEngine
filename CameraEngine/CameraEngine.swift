@@ -197,6 +197,12 @@ public class CameraEngine: NSObject {
         }
     }
     
+    public var blockHandlerPixelBuffer: blockHandlerPixelBuffer? {
+        didSet {
+            cameraOutput.videoEncoder.blockHandlerPixelBuffer = blockHandlerPixelBuffer
+        }
+    }
+    
     private var _rotationCamera = false
     public var rotationCamera: Bool {
         get {
