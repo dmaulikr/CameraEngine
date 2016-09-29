@@ -98,7 +98,7 @@ class CameraEngineVideoEncoder {
     private var audioInputWriter: AVAssetWriterInput!
     private var firstFrame = false
     private var startTime: CMTime!
-    private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
+    private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor!
     var blockHandlerPixelBuffer: blockHandlerPixelBuffer?
     
     
@@ -143,6 +143,16 @@ class CameraEngineVideoEncoder {
         if self.assetWriter.canAdd(self.audioInputWriter) {
             self.assetWriter.add(self.audioInputWriter)
         }
+
+        guard let w = videoOutputSettings?[AVVideoWidthKey] as? NSNumber else {fatalError()}
+        guard let h = videoOutputSettings?[AVVideoHeightKey] as? NSNumber else {fatalError()}
+        pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: videoInputWriter,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32ARGB),
+                kCVPixelBufferWidthKey as String: w.intValue,
+                kCVPixelBufferHeightKey as String: h.intValue
+            ])
     }
     
     func startWriting(_ url: URL) {
@@ -160,8 +170,6 @@ class CameraEngineVideoEncoder {
                 blockCompletion(self.assetWriter.outputURL, nil)
             }
         }
-        
-        pixelBufferAdaptor = nil
     }
     
     func appendBuffer(_ sampleBuffer: CMSampleBuffer!, isVideo: Bool) {
@@ -178,11 +186,7 @@ class CameraEngineVideoEncoder {
             }
             if isVideo {
                 if let blockHandlerPixelBuffer = blockHandlerPixelBuffer {
-                    if pixelBufferAdaptor == nil {
-                        pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInputWriter, sourcePixelBufferAttributes: nil)
-                        
-                    }
-                    guard let pixelBufferAdaptor = pixelBufferAdaptor, let pixelBufferPool = pixelBufferAdaptor.pixelBufferPool else {
+                    guard let pixelBufferPool = pixelBufferAdaptor.pixelBufferPool else {
                         print("error1")
                         return
                     }
