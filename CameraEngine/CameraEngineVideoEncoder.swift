@@ -190,7 +190,7 @@ class CameraEngineVideoEncoder {
                     self.assetWriter.startSession(atSourceTime: startTime)
                 }
                 if isVideo {
-                    
+                    guard self.videoInputWriter.isReadyForMoreMediaData else {return}
                     if let blockHandlerPixelBuffer = self.blockHandlerPixelBuffer {
                         guard let pixelBufferPool = self.pixelBufferAdaptor.pixelBufferPool else {
                             return
@@ -207,11 +207,9 @@ class CameraEngineVideoEncoder {
                         let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
                         blockHandlerPixelBuffer(inBuf, timestamp, outBuf)
                         
-                        if self.videoInputWriter.isReadyForMoreMediaData {
-                            self.pixelBufferAdaptor.append(outBuf, withPresentationTime: timestamp)
-                        }
+                        self.pixelBufferAdaptor.append(outBuf, withPresentationTime: timestamp)
                         
-                    } else if self.videoInputWriter.isReadyForMoreMediaData {
+                    } else {
                         self.videoInputWriter.append(sampleBuffer)
                     }
                 }
